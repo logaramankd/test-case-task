@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-func RunAllTestCases(code string, testCases []TestCase) []TestResult {
+func RunAllTestCases(code string, language string, testCases []TestCase) []TestResult {
 
 	tempDir, err := os.MkdirTemp("", "submission-*")
 	if err != nil {
@@ -21,50 +21,81 @@ func RunAllTestCases(code string, testCases []TestCase) []TestResult {
 	}
 	defer os.RemoveAll(tempDir)
 
-	sourceFile := filepath.Join(tempDir, "solution.go")
-	binaryFile := filepath.Join(tempDir, "solution_bin")
+	var executablePath string
 
-	if runtime.GOOS == "windows" {
-		binaryFile += ".exe"
-	}
+	switch language {
 
-	if err := os.WriteFile(sourceFile, []byte(code), 0644); err != nil {
-		return []TestResult{
-			{Output: "Failed to write source file", Passed: false},
+	case "go":
+		sourceFile := filepath.Join(tempDir, "solution.go")
+		binaryFile := filepath.Join(tempDir, "solution_bin")
+
+		if runtime.GOOS == "windows" {
+			binaryFile += ".exe"
 		}
-	}
 
-	buildCmd := exec.Command("go", "build", "-o", binaryFile, sourceFile)
-	buildOutput, err := buildCmd.CombinedOutput()
-	if err != nil {
+		if err := os.WriteFile(sourceFile, []byte(code), 0644); err != nil {
+			return []TestResult{
+				{Output: "Failed to write source file", Passed: false},
+			}
+		}
+
+		buildCmd := exec.Command("go", "build", "-o", binaryFile, sourceFile)
+		buildOutput, err := buildCmd.CombinedOutput()
+		if err != nil {
+			return []TestResult{
+				{Output: string(buildOutput), Passed: false},
+			}
+		}
+
+		executablePath = binaryFile
+
+	case "python":
+		sourceFile := filepath.Join(tempDir, "solution.py")
+
+		if err := os.WriteFile(sourceFile, []byte(code), 0644); err != nil {
+			return []TestResult{
+				{Output: "Failed to write source file", Passed: false},
+			}
+		}
+
+		executablePath = sourceFile
+
+	default:
 		return []TestResult{
-			{
-				Output: string(buildOutput),
-				Passed: false,
-			},
+			{Output: "Unsupported language", Passed: false},
 		}
 	}
 
 	results := make([]TestResult, 0, len(testCases))
 
 	for _, tc := range testCases {
-		result := runSingleTest(binaryFile, tc)
+		result := runSingleTest(language, executablePath, tc)
 		results = append(results, result)
 	}
 
 	return results
 }
 
-func runSingleTest(binaryPath string, tc TestCase) TestResult {
+func runSingleTest(language string, executablePath string, tc TestCase) TestResult {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	var cmd *exec.Cmd
-	if runtime.GOOS == "windows" {
-		cmd = exec.CommandContext(ctx, binaryPath)
-	} else {
-		cmd = exec.CommandContext(ctx, binaryPath)
+
+	switch language {
+	case "go":
+		cmd = exec.CommandContext(ctx, executablePath)
+	case "python":
+		// Use python3 if your system requires it
+		cmd = exec.CommandContext(ctx, "python", executablePath)
+	default:
+		return TestResult{
+			Input:    tc.Input,
+			Expected: tc.Expected,
+			Output:   "Unsupported language",
+			Passed:   false,
+		}
 	}
 
 	cmd.Stdin = strings.NewReader(tc.Input)

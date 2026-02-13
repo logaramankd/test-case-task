@@ -6,7 +6,6 @@ import (
 	"net/http"
 )
 
-
 type SubmitRequest struct {
 	QuesID   string `json:"quesId"`
 	Language string `json:"language"`
@@ -59,8 +58,6 @@ var questionStore = map[string][]TestCase{
 	},
 }
 
-
-
 func submitHandler(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -79,7 +76,7 @@ func submitHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Language != "go" {
+	if req.Language != "go" && req.Language != "python" {
 		http.Error(w, "Only Go language is supported", http.StatusBadRequest)
 		return
 	}
@@ -90,7 +87,7 @@ func submitHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := RunAllTestCases(req.Code, testCases)
+	results := RunAllTestCases(req.Code, req.Language, testCases)
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
