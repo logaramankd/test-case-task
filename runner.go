@@ -2,131 +2,118 @@ package main
 
 import (
 	"bytes"
-	"context"
+	"encoding/json"
+	"io"
+	"net/http"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strings"
-	"time"
+	"sync"
 )
 
 func RunAllTestCases(code string, language string, testCases []TestCase) []TestResult {
 
-	tempDir, err := os.MkdirTemp("", "submission-*")
-	if err != nil {
-		return []TestResult{
-			{Output: "Failed to create temp directory", Passed: false},
-		}
-	}
-	defer os.RemoveAll(tempDir)
-
-	var executablePath string
-
-	switch language {
-
-	case "go":
-		sourceFile := filepath.Join(tempDir, "solution.go")
-		binaryFile := filepath.Join(tempDir, "solution_bin")
-
-		if runtime.GOOS == "windows" {
-			binaryFile += ".exe"
-		}
-
-		if err := os.WriteFile(sourceFile, []byte(code), 0644); err != nil {
-			return []TestResult{
-				{Output: "Failed to write source file", Passed: false},
-			}
-		}
-
-		buildCmd := exec.Command("go", "build", "-o", binaryFile, sourceFile)
-		buildOutput, err := buildCmd.CombinedOutput()
-		if err != nil {
-			return []TestResult{
-				{Output: string(buildOutput), Passed: false},
-			}
-		}
-
-		executablePath = binaryFile
-
-	case "python":
-		sourceFile := filepath.Join(tempDir, "solution.py")
-
-		if err := os.WriteFile(sourceFile, []byte(code), 0644); err != nil {
-			return []TestResult{
-				{Output: "Failed to write source file", Passed: false},
-			}
-		}
-
-		executablePath = sourceFile
-
-	default:
-		return []TestResult{
-			{Output: "Unsupported language", Passed: false},
-		}
+	sandboxURL := os.Getenv("SANDBOX_SERVICE_URL")
+	if sandboxURL == "" {
+		sandboxURL = "http://localhost:3001"
 	}
 
-	results := make([]TestResult, 0, len(testCases))
+	var results []TestResult
+	var wg sync.WaitGroup
+	var mu sync.Mutex
 
 	for _, tc := range testCases {
-		result := runSingleTest(language, executablePath, tc)
-		results = append(results, result)
+		wg.Add(1)
+
+		go func(tc TestCase) {
+			defer wg.Done()
+
+			payload := map[string]string{
+				"code":     code,
+				"input":    tc.Input,
+				"language": language,
+			}
+
+			body, _ := json.Marshal(payload)
+
+			resp, err := http.Post(sandboxURL+"/run", "application/json", bytes.NewBuffer(body))
+			if err != nil {
+				mu.Lock()
+				results = append(results, TestResult{
+					Input:    tc.Input,
+					Expected: tc.Expected,
+					Output:   "sandbox-service error: " + err.Error(),
+					Passed:   false,
+				})
+				mu.Unlock()
+				return
+			}
+
+			respBody, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+
+			// Check generic error response
+			var generic map[string]interface{}
+			if err := json.Unmarshal(respBody, &generic); err == nil {
+				if errMsg, ok := generic["error"].(string); ok && errMsg != "" {
+					mu.Lock()
+					results = append(results, TestResult{
+						Input:    tc.Input,
+						Expected: tc.Expected,
+						Output:   errMsg,
+						Passed:   false,
+					})
+					mu.Unlock()
+					return
+				}
+			}
+
+			var runResp struct {
+				Stdout   string `json:"stdout"`
+				Stderr   string `json:"stderr"`
+				ExitCode int    `json:"exitCode"`
+			}
+
+			if err := json.Unmarshal(respBody, &runResp); err != nil {
+				mu.Lock()
+				results = append(results, TestResult{
+					Input:    tc.Input,
+					Expected: tc.Expected,
+					Output:   "invalid sandbox-service response",
+					Passed:   false,
+				})
+				mu.Unlock()
+				return
+			}
+
+			if runResp.ExitCode != 0 {
+				mu.Lock()
+				results = append(results, TestResult{
+					Input:    tc.Input,
+					Expected: tc.Expected,
+					Output:   strings.TrimSpace(runResp.Stderr),
+					Passed:   false,
+				})
+				mu.Unlock()
+				return
+			}
+
+			output := strings.TrimSpace(runResp.Stdout)
+			passed := output == strings.TrimSpace(tc.Expected)
+
+			mu.Lock()
+			results = append(results, TestResult{
+				Input:    tc.Input,
+				Expected: tc.Expected,
+				Output:   output,
+				Passed:   passed,
+			})
+			mu.Unlock()
+
+		}(tc)
 	}
+
+	// WAIT for all goroutines to finish
+	wg.Wait()
 
 	return results
-}
-
-func runSingleTest(language string, executablePath string, tc TestCase) TestResult {
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	var cmd *exec.Cmd
-
-	switch language {
-	case "go":
-		cmd = exec.CommandContext(ctx, executablePath)
-	case "python":
-		// Use python3 if your system requires it
-		cmd = exec.CommandContext(ctx, "python", executablePath)
-	default:
-		return TestResult{
-			Input:    tc.Input,
-			Expected: tc.Expected,
-			Output:   "Unsupported language",
-			Passed:   false,
-		}
-	}
-
-	cmd.Stdin = strings.NewReader(tc.Input)
-
-	var out bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &out
-
-	err := cmd.Run()
-
-	output := strings.TrimSpace(out.String())
-
-	if ctx.Err() == context.DeadlineExceeded {
-		return TestResult{
-			Input:    tc.Input,
-			Expected: tc.Expected,
-			Output:   "Time Limit Exceeded",
-			Passed:   false,
-		}
-	}
-
-	if err != nil {
-		output = err.Error() + " | " + output
-	}
-
-	passed := err == nil && output == strings.TrimSpace(tc.Expected)
-
-	return TestResult{
-		Input:    tc.Input,
-		Expected: tc.Expected,
-		Output:   output,
-		Passed:   passed,
-	}
 }

@@ -76,8 +76,8 @@ func submitHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Language != "go" && req.Language != "python" {
-		http.Error(w, "Only Go language is supported", http.StatusBadRequest)
+	if req.Language != "go" && req.Language != "python" && req.Language != "javascript" && req.Language != "js" {
+		http.Error(w, "Only Go, Python and JavaScript (js) are supported", http.StatusBadRequest)
 		return
 	}
 
