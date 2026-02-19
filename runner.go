@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -14,7 +15,10 @@ func RunAllTestCases(code string, language string, testCases []TestCase) []TestR
 
 	sandboxURL := os.Getenv("SANDBOX_SERVICE_URL")
 	if sandboxURL == "" {
+		log.Println("SANDBOX_SERVICE_URL not set. Using default http://localhost:3001")
 		sandboxURL = "http://localhost:3001"
+	} else {
+		log.Println("Using SANDBOX_SERVICE_URL from env:", sandboxURL)
 	}
 
 	var results []TestResult

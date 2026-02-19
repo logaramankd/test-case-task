@@ -9,7 +9,7 @@ app.post("/run", async (req, res) => {
     const { code, input, language } = req.body;
     const lang = (language || "python").toLowerCase();
 
-    const sandbox = await Sandbox.create("base");
+    const sandbox = await Sandbox.create("langsupport-dev");
 
     if (lang === "python") {
       // Write Python file
@@ -58,6 +58,36 @@ EOF`);
       // Run with input piped to the script (process.stdin)
       const result = await sandbox.commands.run(
         `echo "${input}" | node solution.js`
+      );
+
+      res.json({
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.exitCode,
+      });
+      return;
+    }
+    if (lang === "java") {
+      // Write Java file
+      await sandbox.commands.run(`cat << 'EOF' > Main.java
+${code}
+EOF`);
+
+      // Compile
+      const compile = await sandbox.commands.run(`javac Main.java`);
+
+      if (compile.exitCode !== 0) {
+        res.json({
+          stdout: "",
+          stderr: compile.stderr,
+          exitCode: compile.exitCode,
+        });
+        return;
+      }
+
+      // Run with input
+      const result = await sandbox.commands.run(
+        `echo "${input}" | java Main`
       );
 
       res.json({

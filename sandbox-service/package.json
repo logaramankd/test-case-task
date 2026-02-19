@@ -4,7 +4,9 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "e2b:build:dev": "cd my-template && npx tsx build.dev.ts",
+    "e2b:build:prod": "cd my-template && npx tsx build.prod.ts"
   },
   "keywords": [],
   "author": "",
