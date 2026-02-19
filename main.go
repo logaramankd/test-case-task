@@ -93,9 +93,24 @@ func submitHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(results)
 }
+func solveHandler(w http.ResponseWriter, r *http.Request) {
+
+	var req struct {
+		QuesID   string `json:"quesId"`
+		Language string `json:"language"`
+	}
+
+	json.NewDecoder(r.Body).Decode(&req)
+
+	result := SolveWithAgent(req.QuesID, req.Language)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
 
 func main() {
 	http.HandleFunc("/submit", submitHandler)
+	http.HandleFunc("/solve", solveHandler)
 
 	log.Println("Server running at :8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))

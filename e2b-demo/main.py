@@ -62,7 +62,7 @@ Answer:
 """
 
     response = ollama.chat(
-        model="llama3.2",  # change if needed
+        model="llama3.2",
         messages=[
             {"role": "system", "content": GENERAL_PROMPT},
             {"role": "user", "content": user_input},
