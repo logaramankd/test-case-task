@@ -16,30 +16,36 @@ app.post("/run", async (req, res) => {
     const results = [];
 
 
+    let filename = "";
+    let compileCommand = null;
+
     if (lang === "python") {
-      await sandbox.commands.run(`cat << 'EOF' > solution.py
-${code}
-EOF`);
+      filename = "solution.py";
     }
 
     if (lang === "go") {
-      await sandbox.commands.run(`cat << 'EOF' > main.go
-${code}
-EOF`);
+      filename = "main.go";
     }
 
     if (lang === "javascript" || lang === "js" || lang === "node") {
-      await sandbox.commands.run(`cat << 'EOF' > solution.js
-${code}
-EOF`);
+      filename = "solution.js";
     }
 
     if (lang === "java") {
-      await sandbox.commands.run(`cat << 'EOF' > Main.java
-${code}
-EOF`);
+      filename = "Main.java";
+      compileCommand = "javac Main.java";
+    }
 
-      const compile = await sandbox.commands.run(`javac Main.java`);
+    if (!filename) {
+      return res.status(400).json({ error: "Unsupported language" });
+    }
+
+    await sandbox.files.write(filename, code);
+
+    if (compileCommand) {
+      const compile = await sandbox.commands.run(compileCommand, {
+        timeout: 5000,
+      });
 
       if (compile.exitCode !== 0) {
         return res.json(
@@ -100,7 +106,7 @@ EOF`);
     res.status(500).json({ error: err.message });
   } finally {
     if (sandbox) {
-      await sandbox.close();
+      await sandbox.kill();
     }
   }
 });
