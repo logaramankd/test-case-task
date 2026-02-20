@@ -5,104 +5,103 @@ const app = express();
 app.use(express.json());
 
 app.post("/run", async (req, res) => {
-  try {
-    const { code, input, language } = req.body;
-    const lang = (language || "python").toLowerCase();
+  const { code, language, testCases } = req.body;
+  const lang = (language || "python").toLowerCase();
 
-    const sandbox = await Sandbox.create("langsupport-dev");
+  let sandbox;
+
+  try {
+    sandbox = await Sandbox.create("langsupport-dev");
+
+    const results = [];
+
 
     if (lang === "python") {
-      // Write Python file
       await sandbox.commands.run(`cat << 'EOF' > solution.py
 ${code}
 EOF`);
-
-      // Run with input
-      const result = await sandbox.commands.run(
-        `echo "${input}" | python3 solution.py`
-      );
-
-      res.json({
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exitCode: result.exitCode,
-      });
-      return;
     }
 
     if (lang === "go") {
-      // Write Go file
       await sandbox.commands.run(`cat << 'EOF' > main.go
 ${code}
 EOF`);
-
-      // Run with input
-      const result = await sandbox.commands.run(
-        `echo "${input}" | go run main.go`
-      );
-
-      res.json({
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exitCode: result.exitCode,
-      });
-      return;
     }
 
     if (lang === "javascript" || lang === "js" || lang === "node") {
-      // Write JavaScript file
       await sandbox.commands.run(`cat << 'EOF' > solution.js
 ${code}
 EOF`);
-
-      // Run with input piped to the script (process.stdin)
-      const result = await sandbox.commands.run(
-        `echo "${input}" | node solution.js`
-      );
-
-      res.json({
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exitCode: result.exitCode,
-      });
-      return;
     }
+
     if (lang === "java") {
-      // Write Java file
       await sandbox.commands.run(`cat << 'EOF' > Main.java
 ${code}
 EOF`);
 
-      // Compile
       const compile = await sandbox.commands.run(`javac Main.java`);
 
       if (compile.exitCode !== 0) {
-        res.json({
-          stdout: "",
-          stderr: compile.stderr,
-          exitCode: compile.exitCode,
-        });
-        return;
+        return res.json(
+          testCases.map((tc) => ({
+            input: tc.input,
+            expected: tc.expected,
+            output: compile.stderr.trim(),
+            passed: false,
+          }))
+        );
       }
-
-      // Run with input
-      const result = await sandbox.commands.run(
-        `echo "${input}" | java Main`
-      );
-
-      res.json({
-        stdout: result.stdout,
-        stderr: result.stderr,
-        exitCode: result.exitCode,
-      });
-      return;
     }
 
-    res
-      .status(400)
-      .json({ error: "Unsupported language. Use python, go, or javascript." });
+    for (const tc of testCases) {
+      let command = "";
+
+      if (lang === "python") {
+        command = `echo "${tc.input}" | python3 solution.py`;
+      }
+
+      if (lang === "go") {
+        command = `echo "${tc.input}" | go run main.go`;
+      }
+
+      if (lang === "javascript" || lang === "js" || lang === "node") {
+        command = `echo "${tc.input}" | node solution.js`;
+      }
+
+      if (lang === "java") {
+        command = `echo "${tc.input}" | java Main`;
+      }
+
+      const result = await sandbox.commands.run(command);
+
+      if (result.exitCode !== 0) {
+        results.push({
+          input: tc.input,
+          expected: tc.expected,
+          output: result.stderr.trim(),
+          passed: false,
+        });
+        continue;
+      }
+
+      const output = result.stdout.trim();
+      const passed = output === tc.expected.trim();
+
+      results.push({
+        input: tc.input,
+        expected: tc.expected,
+        output,
+        passed,
+      });
+    }
+
+    res.json(results);
   } catch (err) {
     res.status(500).json({ error: err.message });
+  } finally {
+    if (sandbox) {
+      await sandbox.close();
+    }
   }
 });
 
