@@ -6,44 +6,39 @@ app.use(express.json());
 
 app.post("/run", async (req, res) => {
   const { code, language, testCases } = req.body;
-  const lang = (language || "python").toLowerCase();
 
+  if (code == null || typeof code !== "string") {
+    return res.status(400).json({ error: "code is required and must be a string" });
+  }
+  if (!Array.isArray(testCases)) {
+    return res.status(400).json({ error: "testCases is required and must be an array" });
+  }
+
+  const lang = (language || "python").toLowerCase();
+  const langConfig = {
+    python: { filename: "solution.py", runCmd: "python3 solution.py" },
+    go: { filename: "main.go", compileCmd: "go build -o main main.go", runCmd: "./main" },
+    javascript: { filename: "solution.js", runCmd: "node solution.js" },
+    js: { filename: "solution.js", runCmd: "node solution.js" },
+    node: { filename: "solution.js", runCmd: "node solution.js" },
+    java: { filename: "Main.java", runCmd: "java Main", compileCmd: "javac Main.java" },
+  };
+
+  const config = langConfig[lang];
+  if (!config) {
+    return res.status(400).json({ error: "Unsupported language. Use: python, go, javascript, js, java" });
+  }
+
+  const { filename, runCmd, compileCmd } = config;
   let sandbox;
 
   try {
     sandbox = await Sandbox.create("langsupport-dev");
 
-    const results = [];
-
-
-    let filename = "";
-    let compileCommand = null;
-
-    if (lang === "python") {
-      filename = "solution.py";
-    }
-
-    if (lang === "go") {
-      filename = "main.go";
-    }
-
-    if (lang === "javascript" || lang === "js" || lang === "node") {
-      filename = "solution.js";
-    }
-
-    if (lang === "java") {
-      filename = "Main.java";
-      compileCommand = "javac Main.java";
-    }
-
-    if (!filename) {
-      return res.status(400).json({ error: "Unsupported language" });
-    }
-
     await sandbox.files.write(filename, code);
 
-    if (compileCommand) {
-      const compile = await sandbox.commands.run(compileCommand, {
+    if (compileCmd) {
+      const compile = await sandbox.commands.run(compileCmd, {
         timeout: 5000,
       });
 
@@ -59,47 +54,47 @@ app.post("/run", async (req, res) => {
       }
     }
 
-    for (const tc of testCases) {
-      let command = "";
+    // Write all inputs to unique files (enables parallel execution)
+    await Promise.all(
+      testCases.map((tc, i) => sandbox.files.write(`input_${i}.txt`, tc.input ?? ""))
+    );
 
-      if (lang === "python") {
-        command = `echo "${tc.input}" | python3 solution.py`;
-      }
+    // Run all test cases in parallel (with logging to verify parallel execution)
+    const runStart = Date.now();
+    console.log(`[parallel] Starting ${testCases.length} test(s) at ${new Date().toISOString()}`);
 
-      if (lang === "go") {
-        command = `echo "${tc.input}" | go run main.go`;
-      }
+    const runPromises = testCases.map((_, i) =>
+      sandbox.commands
+        .run(`${runCmd} < input_${i}.txt`)
+        .then((result) => {
+          console.log(`[parallel] Test ${i} completed in ${Date.now() - runStart}ms`);
+          return result;
+        })
+    );
+    const runResults = await Promise.all(runPromises);
 
-      if (lang === "javascript" || lang === "js" || lang === "node") {
-        command = `echo "${tc.input}" | node solution.js`;
-      }
+    const totalMs = Date.now() - runStart;
+    console.log(`[parallel] All ${testCases.length} test(s) done in ${totalMs}ms total`);
 
-      if (lang === "java") {
-        command = `echo "${tc.input}" | java Main`;
-      }
-
-      const result = await sandbox.commands.run(command);
-
+    const results = runResults.map((result, i) => {
+      const tc = testCases[i];
       if (result.exitCode !== 0) {
-        results.push({
+        return {
           input: tc.input,
           expected: tc.expected,
           output: result.stderr.trim(),
           passed: false,
-        });
-        continue;
+        };
       }
-
       const output = result.stdout.trim();
       const passed = output === tc.expected.trim();
-
-      results.push({
+      return {
         input: tc.input,
         expected: tc.expected,
         output,
         passed,
-      });
-    }
+      };
+    });
 
     res.json(results);
   } catch (err) {

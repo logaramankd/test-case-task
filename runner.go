@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"os"
 )
@@ -20,7 +21,12 @@ func RunAllTestCases(code string, language string, testCases []TestCase) []TestR
 		"testCases": testCases,
 	}
 
-	body, _ := json.Marshal(payload)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return []TestResult{
+			{Output: "internal error: failed to encode request", Passed: false},
+		}
+	}
 
 	resp, err := http.Post(sandboxURL+"/run", "application/json", bytes.NewBuffer(body))
 	if err != nil {
@@ -31,11 +37,31 @@ func RunAllTestCases(code string, language string, testCases []TestCase) []TestR
 			},
 		}
 	}
-
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		errMsg := string(bodyBytes)
+		if errMsg == "" {
+			errMsg = "sandbox-service returned status " + resp.Status
+		}
+		return []TestResult{
+			{
+				Output: "sandbox-service error: " + errMsg,
+				Passed: false,
+			},
+		}
+	}
+
 	var results []TestResult
-	json.NewDecoder(resp.Body).Decode(&results)
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+		return []TestResult{
+			{
+				Output: "sandbox-service error: invalid response: " + err.Error(),
+				Passed: false,
+			},
+		}
+	}
 
 	return results
 }
